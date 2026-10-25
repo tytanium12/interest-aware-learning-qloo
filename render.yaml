@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: interest-aware-learning
+    runtime: python
+    plan: free
+    autoDeployTrigger: off
+    buildCommand: python -B -m unittest discover -s tests -p 'test*.py' -q
+    startCommand: python -B hosted_server.py
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
+      - key: IAL_MODE
+        value: provider
+      - key: IAL_TAVILY_ENRICHMENT
+        value: '1'
+      - key: IAL_AUDITED_BUDGET
+        value: '1'
+      - key: IAL_OPENAI_MAX_GENERATIONS
+        value: '1'
+      - key: IAL_OPENAI_MAX_OUTPUT_TOKENS
+        value: '6500'
+      - key: HOSTED_LIVE_ENABLED
+        value: '0'
+      - key: HOSTED_MAX_GENERATIONS
+        value: '8'
+      - key: HOSTED_QUOTA_KEY
+        value: ial:hackathon:2026:live:v1
+      - key: HOSTED_JUDGE_CODE
+        sync: false
+      - key: HOSTED_COOKIE_SECRET
+        sync: false
+      - key: QLOO_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        sync: false
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: TAVILY_API_KEY_FILE
+        sync: false

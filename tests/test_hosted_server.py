@@ -1,0 +1,161 @@
+"""Offline hosted release gates: no external API calls, no dollars spent."""
+import http.client
+import io
+import json
+import os
+import threading
+import unittest
+from unittest import mock
+
+import app
+import hosted_server as host
+
+
+class FakeHTTPResponse:
+    def __init__(self, value):
+        self.value = value
+    def __enter__(self): return self
+    def __exit__(self, *args): return None
+    def read(self, n=-1): return json.dumps(self.value).encode('utf-8')
+
+
+class HostedReleaseTests(unittest.TestCase):
+    def setUp(self):
+        self.settings = host.Settings(
+            'https://example.onrender.com', True, 'judge-unique-secret-123', 'x' * 44,
+            'https://fake-test.upstash.io', 't' * 40, 'ial:hackathon:2026:live:v1', 8)
+
+    def test_live_config_defaults_off_and_missing_protections_rejected(self):
+        self.assertFalse(host.Settings.read({}).enabled)
+        with self.assertRaisesRegex(ValueError, 'HTTPS hosted origin'):
+            host.Settings.read({'HOSTED_LIVE_ENABLED': '1'})
+        with self.assertRaisesRegex(ValueError, 'HOSTED_LIVE_ENABLED'):
+            host.Settings.read({'HOSTED_LIVE_ENABLED': 'true'})
+
+    def test_validity_and_expiration_of_signed_cookie(self):
+        token = host.session_token(self.settings, 100000)
+        self.assertTrue(host.authenticated(self.settings, host.COOKIE_NAME + '=' + token, now=100030))
+        self.assertFalse(host.authenticated(self.settings, host.COOKIE_NAME + '=' + token, now=100000 + host.SESSION_LIFETIME + 1))
+        self.assertFalse(host.authenticated(self.settings, host.COOKIE_NAME + '=' + token + 'BAD', now=100030))
+        self.assertFalse(host.authenticated(self.settings, 'other=x', now=100030))
+
+    def test_quota_atomic_evaluation_and_fail_closed(self):
+        recorded = []
+        def fake_open(req, timeout):
+            self.assertEqual(timeout, 5)
+            command = json.loads(req.data)
+            self.assertEqual(command[0], 'EVAL')
+            self.assertIn("redis.call('INCR'", command[1])
+            self.assertEqual(command[3], self.settings.quota_key)
+            recorded.append(command)
+            return FakeHTTPResponse({'result': len(recorded)})
+        self.assertTrue(host.reserve_generation(self.settings, opener=fake_open))
+        self.assertTrue(host.reserve_generation(self.settings, opener=fake_open))
+        self.assertEqual(len(recorded), 2)
+        self.assertFalse(host.reserve_generation(self.settings, opener=lambda req, timeout: FakeHTTPResponse({'result': -1})))
+        for value in ({'result': '1'}, {'result': 99}, {'error': 'boom'}):
+            with self.assertRaises(RuntimeError):
+                host.reserve_generation(self.settings, opener=lambda req, timeout: FakeHTTPResponse(value))
+        with self.assertRaises(RuntimeError):
+            host.reserve_generation(self.settings, opener=lambda req, timeout: (_ for _ in ()).throw(OSError('network down')))
+
+    def _serve(self, settings):
+        server = app.ThreadingHTTPServer(('127.0.0.1', 0), host.HostedHandler)
+        server.hosted_settings = settings
+        thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.01})
+        thread.start()
+        self.addCleanup(lambda: (server.shutdown(), server.server_close(), thread.join(timeout=5)))
+        return server.server_port
+
+    @staticmethod
+    def _request(port, method, route, body=None, headers=None):
+        connection = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        try:
+            connection.request(method, route, body=body, headers=headers or {})
+            response = connection.getresponse()
+            return response.status, response.read(), dict(response.getheaders())
+        finally:
+            connection.close()
+
+    def test_health_and_disarmed_login_only(self):
+        settings = host.Settings.read({})
+        port = self._serve(settings)
+        status, body, _ = self._request(port, 'GET', '/health')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['status'], 'ok')
+        status, body, _ = self._request(port, 'GET', '/')
+        self.assertEqual(status, 200)
+        self.assertIn(b'Judge access', body)
+        self.assertNotIn(b'<script>', body)
+        status, _, _ = self._request(port, 'POST', '/api/learn')
+        self.assertEqual(status, 503)
+
+    def test_unauthorized_request_refused_before_paid_calls(self):
+        port = self._serve(self.settings)
+        with mock.patch.object(host, 'reserve_generation', side_effect=AssertionError('quota must not be touched')):
+            status, body, _ = self._request(port, 'POST', '/api/learn', b'{}', {'Content-Type': 'application/json'})
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(body)['error']['code'], 'judge_access_required')
+
+    def test_login_and_live_validation_and_quota_stop(self):
+        port = self._serve(self.settings)
+        status, _, _ = self._request(port, 'POST', '/judge-access', 'passcode=wrong', {'Content-Type': 'application/x-www-form-urlencoded'})
+        self.assertEqual(status, 403)
+        status, _, heads = self._request(port, 'POST', '/judge-access', 'passcode=judge-unique-secret-123', {'Content-Type': 'application/x-www-form-urlencoded'})
+        self.assertEqual(status, 303)
+        cookie = heads['Set-Cookie'].split(';', 1)[0]
+        self.assertIn('HttpOnly', heads['Set-Cookie'])
+        self.assertIn('Secure', heads['Set-Cookie'])
+        status, page, _ = self._request(port, 'GET', '/', headers={'Cookie': cookie})
+        self.assertEqual(status, 200)
+        self.assertIn(b'/api/learn', page)
+        hdr = {'Cookie': cookie, 'Content-Type': 'application/json', 'Origin': self.settings.origin}
+        invalid = b'{"provider_mode":"provider"}'
+        with mock.patch.object(host, 'reserve_generation', side_effect=AssertionError('invalid input')):
+            status, _, _ = self._request(port, 'POST', '/api/learn', invalid, hdr)
+        self.assertEqual(status, 400)
+        payload = {
+            'schema_version': app.HTTP_SCHEMA_VERSION, 'provider_mode': 'auto',
+            'explicit_interests': ['gardening'], 'pasted_educational_source_text': 'Plants use energy from sunlight.',
+            'learning_request': 'Explain energy', 'cultural_context': 'classroom',
+        }
+        body = json.dumps(payload).encode('utf-8')
+        with mock.patch.object(host, 'reserve_generation', return_value=False) as gate:
+            status, raw, _ = self._request(port, 'POST', '/api/learn', body, hdr)
+        self.assertEqual(status, 429, raw)
+        gate.assert_called_once()
+        with mock.patch.object(host, 'reserve_generation', side_effect=RuntimeError('quota unavailable')):
+            status, _, _ = self._request(port, 'POST', '/api/learn', body, hdr)
+        self.assertEqual(status, 503)
+        with mock.patch.object(host, 'reserve_generation', side_effect=AssertionError('wrong origin')):
+            status, _, _ = self._request(port, 'POST', '/api/learn', body, dict(hdr, Origin='https://evil.example'))
+        self.assertEqual(status, 403)
+
+    def test_reserved_request_calls_existing_workflow(self):
+        port = self._serve(self.settings)
+        cookie = host.COOKIE_NAME + '=' + host.session_token(self.settings)
+        payload = {
+            'schema_version': app.HTTP_SCHEMA_VERSION, 'provider_mode': 'auto',
+            'explicit_interests': ['gardening'], 'pasted_educational_source_text': 'Plants use energy from sunlight.',
+            'learning_request': 'Explain energy', 'cultural_context': 'classroom',
+        }
+        raw = json.dumps(payload).encode('utf-8')
+        class DummyProvider:
+            def __init__(self, *args, **kwargs): pass
+        # The existing HTTP Handler is exercised after reservation; mock its
+        # external providers and config only. No real network is possible.
+        cfg = app.AppConfig('provider', qloo_api_key='fake-key', openai_api_key='fake-key', openai_model='mock-model')
+        with mock.patch.object(host, 'reserve_generation', return_value=True) as gate, \
+             mock.patch.object(app, 'load_app_config', return_value=cfg), \
+             mock.patch.object(app, 'QlooCulturalIntelligenceProvider', DummyProvider), \
+             mock.patch.object(app, 'OpenAIResponsesLessonGenerationProvider', DummyProvider), \
+             mock.patch.object(app, 'run_learning_workflow', side_effect=RuntimeError('no live transport should run')) as workflow:
+            status, data, _ = self._request(port, 'POST', '/api/learn', raw, {'Cookie': cookie, 'Content-Type': 'application/json'})
+        gate.assert_called_once()
+        workflow.assert_called_once()
+        self.assertEqual(status, 500)
+        self.assertNotIn(b'fake-key', data)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,0 +1,22 @@
+# Python caches and local test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environments, credentials, and developer configuration
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+*.local
+*.log
+
+# Generated/runtime output
+build/
+dist/
