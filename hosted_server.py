@@ -165,14 +165,14 @@ class HostedHandler(app.Handler):
     def _settings(self):
         return self.settings or self.server.hosted_settings
 
-    def _send(self, status, content, content_type="text/plain; charset=utf-8", *, cookie=None, location=None):
+    def _send(self, status, content, content_type="text/plain; charset=utf-8", *, cookie=None, location=None, referrer_policy="no-referrer"):
         raw = content if isinstance(content, bytes) else content.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(raw)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Referrer-Policy", referrer_policy)
         self.send_header("X-Frame-Options", "DENY")
         if cookie:
             self.send_header("Set-Cookie", cookie)
@@ -199,7 +199,7 @@ class HostedHandler(app.Handler):
                 # Existing UI is unmodified; response is an actual live provider workflow.
                 self._send(200, app.HTML, "text/html; charset=utf-8")
             else:
-                self._send(200, LOGIN_PAGE, "text/html; charset=utf-8")
+                self._send(200, LOGIN_PAGE, "text/html; charset=utf-8", referrer_policy="same-origin")
         else:
             self._send(404, "Not found")
 

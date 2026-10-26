@@ -115,6 +115,29 @@ class HostedReleaseTests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(json.loads(body)['error']['code'], 'judge_access_required')
 
+
+    def test_login_origin_policy_and_cross_site_rejection(self):
+        port = self._serve(self.settings)
+        status, page, headers = self._request(port, 'GET', '/')
+        self.assertEqual(status, 200)
+        self.assertIn(b'/judge-access', page)
+        # HTML form navigation submits Origin:null under no-referrer.
+        self.assertEqual(headers['Referrer-Policy'], 'same-origin')
+        login_headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        body = 'passcode=judge-unique-secret-123'
+        for unsafe_origin in ('null', 'https://attacker.example'):
+            status, content, _ = self._request(
+                port, 'POST', '/judge-access', body,
+                dict(login_headers, Origin=unsafe_origin))
+            self.assertEqual((status, content), (403, b'Access denied'))
+        status, content, response_headers = self._request(
+            port, 'POST', '/judge-access', body,
+            dict(login_headers, Origin=self.settings.origin))
+        self.assertEqual(status, 303, content)
+        self.assertIn('HttpOnly', response_headers['Set-Cookie'])
+        self.assertIn('Secure', response_headers['Set-Cookie'])
+        self.assertEqual(response_headers['Location'], '/')
+
     def test_login_and_live_validation_and_quota_stop(self):
         port = self._serve(self.settings)
         status, _, _ = self._request(port, 'POST', '/judge-access', 'passcode=wrong', {'Content-Type': 'application/x-www-form-urlencoded'})
