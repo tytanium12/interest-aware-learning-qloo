@@ -52,10 +52,10 @@ class Settings:
         redis_token = env.get("UPSTASH_REDIS_REST_TOKEN", "")
         quota_key = env.get("HOSTED_QUOTA_KEY", "ial:hackathon:2026:live:v1")
         try:
-            maximum = int(env.get("HOSTED_MAX_GENERATIONS", "8"))
+            maximum = int(env.get("HOSTED_MAX_GENERATIONS", "200"))
         except ValueError:
             raise ValueError("Invalid hosted generation limit") from None
-        if not 1 <= maximum <= 50 or not re.fullmatch(r"[A-Za-z0-9:_-]{8,100}", quota_key):
+        if not 1 <= maximum <= 500 or not re.fullmatch(r"[A-Za-z0-9:_-]{8,100}", quota_key):
             raise ValueError("Unsafe hosted quota configuration")
         if enabled:
             parsed = urlsplit(origin)

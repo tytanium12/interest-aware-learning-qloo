@@ -32,6 +32,24 @@ class HostedReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'HOSTED_LIVE_ENABLED'):
             host.Settings.read({'HOSTED_LIVE_ENABLED': 'true'})
 
+    def test_contest_allowance_supports_200_and_rejects_excessive_values(self):
+        settings = host.Settings.read({"HOSTED_MAX_GENERATIONS": "200"})
+        self.assertEqual(settings.max_generations, 200)
+        self.assertEqual(host.Settings.read({}).max_generations, 200)
+        with self.assertRaisesRegex(ValueError, "Unsafe hosted quota"):
+            host.Settings.read({"HOSTED_MAX_GENERATIONS": "501"})
+        with self.assertRaisesRegex(ValueError, "Unsafe hosted quota"):
+            host.Settings.read({"HOSTED_MAX_GENERATIONS": "0"})
+        live_settings = host.Settings(
+            self.settings.origin, True, self.settings.judge_code, self.settings.cookie_secret,
+            self.settings.redis_url, self.settings.redis_token, self.settings.quota_key, 200)
+        def fake_open(req, timeout):
+            command = json.loads(req.data)
+            self.assertEqual(command[-1], "200")
+            return FakeHTTPResponse({"result": 200})
+        self.assertTrue(host.reserve_generation(live_settings, opener=fake_open))
+        self.assertFalse(host.reserve_generation(live_settings, opener=lambda req, timeout: FakeHTTPResponse({"result": -1})))
+
     def test_validity_and_expiration_of_signed_cookie(self):
         token = host.session_token(self.settings, 100000)
         self.assertTrue(host.authenticated(self.settings, host.COOKIE_NAME + '=' + token, now=100030))

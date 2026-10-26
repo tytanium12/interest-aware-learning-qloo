@@ -33,7 +33,7 @@ The hosted entrypoint is `hosted_server.py`. The local development server remain
 
 ## Financial guardrails
 
-The global allowance defaults to 8 generation **attempts**. Each attempt may use bounded Qloo/Tavily/OpenAI transport/retries under existing per-request limits. Upstash counters are atomic and durable across web restarts, and fail closed on missing/invalid responses. A transient quota response failure may still consume an allowance. This does not create a strict USD spending cap across providers. Also set provider-specific billing caps/alerts where supported; do not mistake an alert for a hard cap. Reserve sufficient allowances for judges after the one live test. Changing `HOSTED_QUOTA_KEY` resets the counter; **do not rotate it during judging**.
+The global allowance defaults to 200 generation **attempts** (the validated configuration ceiling is 500). Each attempt may use bounded Qloo/Tavily/OpenAI transport/retries under existing per-request limits. Upstash counters are atomic and durable across web restarts, and fail closed on missing/invalid responses. A transient quota response failure may still consume an allowance. This does not create a strict USD spending cap across providers. Also set provider-specific billing caps/alerts where supported; do not mistake an alert for a hard cap. Reserve sufficient allowances for judges after the one live test. Changing `HOSTED_QUOTA_KEY` resets the counter; **do not rotate it during judging**.
 
 ## Emergency disable
 

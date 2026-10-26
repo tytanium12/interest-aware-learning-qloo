@@ -23,7 +23,7 @@ services:
       - key: HOSTED_LIVE_ENABLED
         value: '0'
       - key: HOSTED_MAX_GENERATIONS
-        value: '8'
+        value: '200'
       - key: HOSTED_QUOTA_KEY
         value: ial:hackathon:2026:live:v1
       - key: HOSTED_JUDGE_CODE
