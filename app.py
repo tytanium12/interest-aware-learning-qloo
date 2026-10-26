@@ -1694,9 +1694,9 @@ HTML = """<!doctype html>
 </head>
 <body>
 <main>
-  <div class="eyebrow">Local learning studio</div>
+  <div class="eyebrow">Learning studio</div>
   <h1>Follow a question you already care about.</h1>
-  <p class="intro" id="demo-disclosure" data-demo-mode="false" aria-label="Backend mode disclosure">Your inputs are sent to the local learning backend, which returns a source-grounded lesson and its personalization provenance.</p>
+  <p class="intro" id="demo-disclosure" data-demo-mode="false" aria-label="Backend mode disclosure">Your inputs are sent to the learning backend, which returns a source-grounded lesson and its personalization provenance.</p>
   <section class="workflow" aria-labelledby="workflow-heading">
     <h2 id="workflow-heading">How it works</h2>
     <ol>
@@ -1737,7 +1737,7 @@ HTML = """<!doctype html>
   </section>
   <section id="lesson" class="lesson-result" aria-live="polite" aria-label="Generated explanation" tabindex="-1" hidden></section>
   <button id="start-over" class="start-over-button" type="button" hidden>Start over</button>
-  <footer>Run locally with Python 3.12+ and a browser. The server binds to loopback only.</footer>
+  <footer>Interest-Aware Learning: source-grounded education with personalized examples.</footer>
 </main>
 <script>
 const HTTP_SCHEMA_VERSION = "qloo2-m2-r01.v1";
@@ -1979,10 +1979,6 @@ function renderLesson(payload) {
   const question = document.createElement("p");
   question.className = "meta";
   question.textContent = `Help with: ${displayText(lastPayload.learning_request)}`;
-  const sourcePreview = document.createElement("p");
-  sourcePreview.className = "meta";
-  const source = lastPayload.pasted_educational_source_text;
-  sourcePreview.textContent = `Pasted source: ${displayText(source.slice(0, 240))}${source.length > 240 ? "…" : ""}`;
   // A structured lesson's section IDs are deduplicated by the backend in this
   // exact order before source_grounded_claims is emitted. Only assign display
   // citation IDs when that full mapping is present; never guess a source fact.
@@ -2012,8 +2008,6 @@ function renderLesson(payload) {
       webRefs.set(source.id, source);
     }
   });
-  let technicalDetails = null;
-  let claimDetails = null;
   // Model content is ALWAYS handled as text nodes. Recognized, evidence-backed
   // citations alone become DOM anchors; unknown IDs remain literal text.
   const appendCitedText = (parent, raw) => {
@@ -2025,16 +2019,20 @@ function renderLesson(payload) {
       const id = match[1];
       const claim = sourceRefs.get(id);
       const researchSource = webRefs.get(id);
-      if (claim || researchSource) {
+      if (claim) {
+        // Preserve source citations without linking to a removed diagnostics panel.
+        const marker = document.createElement('span');
+        marker.className = 'lesson-citation';
+        marker.textContent = `[${claim.label}]`;
+        marker.title = 'Grounded in the pasted source material';
+        marker.setAttribute('aria-label', `Pasted source ${claim.label}`);
+        parent.append(marker);
+      } else if (researchSource) {
         const anchor = document.createElement('a');
         anchor.className = 'lesson-citation';
-        anchor.textContent = `[${claim ? claim.label : id}]`;
-        anchor.href = `#${claim ? claim.target : `lesson-research-${id.toLowerCase()}`}`;
-        anchor.setAttribute('aria-label', claim ? `Pasted source ${claim.label}` : `Web research reference ${id}`);
-        if (claim) anchor.addEventListener('click', () => {
-          if (technicalDetails) technicalDetails.setAttribute('open', '');
-          if (claimDetails) claimDetails.open = true;
-        });
+        anchor.textContent = `[${id}]`;
+        anchor.href = `#lesson-research-${id.toLowerCase()}`;
+        anchor.setAttribute('aria-label', `Web research reference ${id}`);
         parent.append(anchor);
       } else {
         parent.append(document.createTextNode(match[0]));
@@ -2097,20 +2095,6 @@ function renderLesson(payload) {
     lesson.append(body);
   }
 
-  const appendOptionalDetails = (labelText, values) => {
-    if (!Array.isArray(values) || !values.some((value) => typeof value === 'string' && value.trim())) return;
-    const details = document.createElement("details");
-    const summary = document.createElement("summary");
-    summary.textContent = labelText;
-    const list = document.createElement("ul");
-    values.filter((value) => typeof value === 'string' && value.trim()).forEach((value) => {
-      const item = document.createElement("li");
-      item.textContent = displayText(value);
-      list.append(item);
-    });
-    details.append(summary, list);
-    technicalDetails.append(details);
-  };
   // Only call a Qloo-derived subtopic research-supported when the backend confirms it.
   const research = response.usage && response.usage.research;
   const selectedTheme = research && research.qloo_theme;
@@ -2119,6 +2103,13 @@ function renderLesson(payload) {
     interestNote.className = 'lesson-interest-note';
     interestNote.textContent = `Interest connection: ${displayText(selectedTheme.theme)} — found through Qloo and supported by research.`;
     lesson.append(interestNote);
+  }
+  renderActions(lesson);
+  if (sourceRefs.size) {
+    const citationKey = document.createElement('p');
+    citationKey.className = 'meta lesson-citation-key';
+    citationKey.textContent = 'S = your supplied text; R = web research.';
+    lesson.append(citationKey);
   }
   if (webRefs.size) {
     const refs = document.createElement("section");
@@ -2140,118 +2131,6 @@ function renderLesson(payload) {
     refs.append(heading, refsList);
     lesson.append(refs);
   }
-  if (sourceRefs.size || webRefs.size) {
-    const citationKey = document.createElement('p');
-    citationKey.className = 'meta lesson-citation-key';
-    citationKey.textContent = 'Citation key: S = facts from your pasted material; R = external web research.';
-    lesson.append(citationKey);
-  }
-  // Keep provenance available but out of the reading path; links remain visible above.
-  technicalDetails = document.createElement('details');
-  technicalDetails.className = 'lesson-technical';
-  const technicalSummary = document.createElement('summary');
-  technicalSummary.textContent = 'How this explanation was made (technical details)';
-  technicalDetails.append(technicalSummary, sourcePreview);
-  appendLabeledText(technicalDetails, "Personalization: ", displayText(response.personalization_note || "No personalization note reported."));
-  appendLabeledText(technicalDetails, "Grounding: ", displayText(response.grounding_status || "Source grounding status not reported."));
-  appendLabeledText(technicalDetails, "Provider: ", `${displayText(payload.provider_mode || "unknown")} / ${displayText(response.demo_label || "unreported")}`);
-  appendLabeledText(technicalDetails, "Provenance: ", displayText(response.provenance || "Provider provenance not reported."));
-  const qlooResolutions = Array.isArray(response.interest_resolutions) ? response.interest_resolutions : [];
-  const providerMode = String(payload.provider_mode || response.provider_mode || "").toLowerCase();
-  const verifiedQlooIds = [];
-  const selectedConnections = [];
-  const fallbackReasons = [];
-  qlooResolutions.forEach((resolution) => {
-    if (!resolution || typeof resolution !== "object") return;
-    const interest = displayText(resolution.input_interest || "interest");
-    const status = String(resolution.status || "").toLowerCase();
-    const candidates = Array.isArray(resolution.candidates) ? resolution.candidates : [];
-    if (status === "resolved") {
-      candidates.forEach((candidate) => {
-        if (!candidate || typeof candidate !== "object") return;
-        const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
-        const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
-        if (id) verifiedQlooIds.push(`${name || "Qloo result"} (${id})`);
-      });
-      const affinities = Array.isArray(resolution.affinity_evidence) ? resolution.affinity_evidence : [];
-      affinities.forEach((connection) => {
-        if (!connection || typeof connection !== "object") return;
-        const id = typeof connection.entity_id === "string" ? connection.entity_id.trim() : "";
-        const name = typeof connection.name === "string" ? connection.name.trim() : "";
-        if (id || name) selectedConnections.push(`${interest}: ${name || "selected connection"}${id ? ` (${id})` : ""}`);
-      });
-    }
-    if (status !== "resolved" || !candidates.length) {
-      const provenance = Array.isArray(resolution.provenance) ? resolution.provenance.filter((value) => typeof value === "string" && value.trim()).join("; ") : "";
-      fallbackReasons.push(`${interest}: ${status || "not resolved"}${provenance ? ` — ${provenance}` : ""}`);
-    }
-  });
-  const qlooUnavailable = qlooResolutions.some((resolution) => {
-    const status = String(resolution && resolution.status || "").toLowerCase();
-    const provenance = Array.isArray(resolution && resolution.provenance) ? resolution.provenance.join(" ").toLowerCase() : "";
-    return status === "error" || provenance.includes("error") || provenance.includes("unavailable");
-  }) || (providerMode === "provider" && qlooResolutions.length === 0);
-  const qlooStatus = providerMode === "demo" ? "MOCK" : verifiedQlooIds.length ? "REAL_MATCH" : qlooUnavailable ? "UNAVAILABLE" : "NO_MATCH";
-  const openAiOnly = providerMode === "provider" && response.personalization_applied === true && qlooStatus !== "REAL_MATCH";
-  const qlooSummary = document.createElement("p");
-  qlooSummary.className = "meta";
-  const qlooLabel = document.createElement("strong");
-  qlooLabel.textContent = "Qloo status: ";
-  const personalizationSummary = openAiOnly ? "OpenAI-only personalization; no Qloo match is claimed." : qlooStatus === "REAL_MATCH" ? "Qloo evidence available for presentation." : qlooStatus === "MOCK" ? "Local mock context; no live Qloo match is claimed." : "No usable Qloo match was returned.";
-  qlooSummary.append(qlooLabel, document.createTextNode(`${qlooStatus} — ${personalizationSummary}`));
-  technicalDetails.append(qlooSummary);
-  const qlooDetails = document.createElement("details");
-  const qlooDetailsSummary = document.createElement("summary");
-  qlooDetailsSummary.textContent = "Qloo evidence and fallback details";
-  qlooDetails.append(qlooDetailsSummary);
-  const appendEvidenceGroup = (labelText, values, emptyText) => {
-    if (!values.length && !emptyText) return;
-    const heading = document.createElement("strong");
-    heading.textContent = labelText;
-    qlooDetails.append(heading);
-    const list = document.createElement("ul");
-    const entries = values.length ? values : [emptyText];
-    entries.forEach((value) => {
-      const item = document.createElement("li");
-      item.textContent = displayText(value);
-      list.append(item);
-    });
-    qlooDetails.append(list);
-  };
-  appendEvidenceGroup("Verified Qloo entities/IDs", [...new Set(verifiedQlooIds)], "No verified Qloo entity or ID was returned.");
-  appendEvidenceGroup("Selected connections", [...new Set(selectedConnections)], "No selected Qloo connection was returned.");
-  appendEvidenceGroup("Fallback reasons", [...new Set(fallbackReasons)], qlooStatus === "NO_MATCH" ? "Qloo returned no verified match; source-grounded fallback remains active." : "");
-  const providerTrace = response.provider_evidence && Array.isArray(response.provider_evidence.provenance) ? response.provider_evidence.provenance : [];
-  appendEvidenceGroup("Provider trace", providerTrace, "No provider trace reported.");
-  technicalDetails.append(qlooDetails);
-  appendLabeledText(technicalDetails, "Personalization applied: ", response.personalization_applied === true ? "yes" : "no");
-  lesson.append(technicalDetails);
-  // Show exactly the same source-citation IDs used inside the lesson. Never
-  // infer label↔fact pairs from array position unless the backend mapping aligns.
-  if (sourceRefs.size) {
-    claimDetails = document.createElement('details');
-    const claimSummary = document.createElement('summary');
-    claimSummary.textContent = 'Pasted source facts and citations';
-    const claimList = document.createElement('ul');
-    claimList.className = 'lesson-source-facts';
-    sectionClaimIds.forEach((id) => {
-      const fact = sourceRefs.get(id);
-      const item = document.createElement('li');
-      item.id = fact.target;
-      item.className = 'lesson-source-fact';
-      const label = document.createElement('strong');
-      label.textContent = `[${fact.label}] `;
-      item.append(label, document.createTextNode(fact.text));
-      claimList.append(item);
-    });
-    claimDetails.append(claimSummary, claimList);
-    technicalDetails.append(claimDetails);
-  } else {
-    appendOptionalDetails('Pasted source grounding facts', response.source_grounded_claims);
-  }
-  appendOptionalDetails("Introduced analogies", response.introduced_analogies);
-  appendOptionalDetails("Cultural references", response.cultural_references);
-  renderActions(lesson);
   lesson.focus();
 }
 
@@ -2907,7 +2786,7 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
 
 ThreadingHTTPServer = BoundedThreadingHTTPServer
 
-_privacy_marker = '<p class="intro" id="demo-disclosure" data-demo-mode="false" aria-label="Backend mode disclosure">Your inputs are sent to the local learning backend, which returns a source-grounded lesson and its personalization provenance.</p>'
+_privacy_marker = '<p class="intro" id="demo-disclosure" data-demo-mode="false" aria-label="Backend mode disclosure">Your inputs are sent to the learning backend, which returns a source-grounded lesson and its personalization provenance.</p>'
 _privacy_disclosure = '<p class="meta" id="privacy-disclosure">Offline demo stays local and uses no external service. In bounded live mode, only your explicitly added interests go to Qloo for cultural matching; your pasted source text and question, plus those interests, go to OpenAI for lesson generation. Do not paste sensitive information. API usage is capped per request.</p>'
 HTML = HTML.replace(_privacy_marker, _privacy_marker + _privacy_disclosure, 1)
 

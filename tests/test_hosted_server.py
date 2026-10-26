@@ -116,6 +116,22 @@ class HostedReleaseTests(unittest.TestCase):
         self.assertEqual(json.loads(body)['error']['code'], 'judge_access_required')
 
 
+    def test_learner_ui_retains_references_without_exposing_diagnostics(self):
+        page = app.HTML
+        self.assertIn('Web research references', page)
+        self.assertIn('lesson.append(refs)', page)
+        self.assertIn('renderActions(lesson)', page)
+        self.assertIn('Grounded in the pasted source material', page)
+        self.assertIn('lesson-research-', page)
+        self.assertIn('Learning studio', page)
+        self.assertNotIn('Local learning studio', page)
+        for internal_label in (
+            'How this explanation was made', 'Qloo evidence and fallback details',
+            'Provider trace', 'Pasted source facts and citations',
+            'Personalization applied:', 'Verified Qloo entities/IDs',
+        ):
+            self.assertNotIn(internal_label, page)
+
     def test_login_origin_policy_and_cross_site_rejection(self):
         port = self._serve(self.settings)
         status, page, headers = self._request(port, 'GET', '/')
