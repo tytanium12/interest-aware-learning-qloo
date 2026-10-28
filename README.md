@@ -13,10 +13,11 @@ the workflow may use a neutral explanation.
 
 ## Hosted demo
 
-For the 2026 Qloo Agentic Hackathon, judges access a live hosted instance by
-entering a judge access code from the Devpost testing instructions. Live
-requests may incur API charges. The hosted server uses an externally durable,
-atomic global request allowance and a kill switch.
+For the 2026 Qloo Agentic Hackathon, judges can open the live demo at
+https://interest-aware-learning-qloo.onrender.com/ without an access code
+when public-demo mode is enabled. Live requests may incur API charges.
+The hosted server uses an externally durable, atomic global request allowance
+and a kill switch.
 
 See [the hosted release guide](docs/HOSTED_RELEASE.md) for the hosting setup,
 secret handling, judge-access steps, and accepted limitations. The HTTPS site

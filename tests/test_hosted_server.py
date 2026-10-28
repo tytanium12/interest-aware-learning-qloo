@@ -5,6 +5,7 @@ import json
 import os
 import threading
 import unittest
+from dataclasses import replace
 from unittest import mock
 
 import app
@@ -153,6 +154,77 @@ class HostedReleaseTests(unittest.TestCase):
         self.assertIn('HttpOnly', response_headers['Set-Cookie'])
         self.assertIn('Secure', response_headers['Set-Cookie'])
         self.assertEqual(response_headers['Location'], '/')
+
+    def test_public_mode_requires_explicit_opt_in(self):
+        self.assertFalse(host.Settings.read({}).public_demo)
+        self.assertTrue(host.Settings.read({'HOSTED_PUBLIC_DEMO': '1'}).public_demo)
+        with self.assertRaisesRegex(ValueError, 'HOSTED_PUBLIC_DEMO'):
+            host.Settings.read({'HOSTED_PUBLIC_DEMO': 'yes'})
+        env = {
+            'HOSTED_LIVE_ENABLED': '1', 'HOSTED_PUBLIC_DEMO': '1',
+            'HOSTED_ORIGIN': self.settings.origin,
+            'UPSTASH_REDIS_REST_URL': self.settings.redis_url,
+            'UPSTASH_REDIS_REST_TOKEN': self.settings.redis_token,
+            'IAL_MODE': 'provider', 'IAL_TAVILY_ENRICHMENT': '1',
+            'IAL_OPENAI_MAX_GENERATIONS': '1', 'IAL_AUDITED_BUDGET': '1',
+            'IAL_OPENAI_MAX_OUTPUT_TOKENS': '6500',
+            'TAVILY_API_KEY_FILE': '/mock/key',
+        }
+        with mock.patch.object(app, 'load_app_config'), mock.patch.object(host.Path, 'is_file', return_value=True):
+            public = host.Settings.read(env)
+            self.assertTrue(public.enabled and public.public_demo)
+            self.assertEqual(public.max_generations, 200)
+            with self.assertRaisesRegex(ValueError, 'authentication secrets'):
+                host.Settings.read(dict(env, HOSTED_PUBLIC_DEMO='0'))
+
+    def test_public_mode_open_studio_and_quota_fail_closed(self):
+        public = replace(self.settings, public_demo=True)
+        port = self._serve(public)
+        status, page, headers = self._request(port, 'GET', '/')
+        self.assertEqual(status, 200)
+        self.assertIn(b'Follow a question you already care about.', page)
+        self.assertNotIn(b'/judge-access', page)
+        self.assertNotIn('Set-Cookie', headers)
+        status, _, _ = self._request(port, 'POST', '/judge-access',
+            'passcode=judge-unique-secret-123',
+            {'Content-Type': 'application/x-www-form-urlencoded'})
+        self.assertEqual(status, 404)
+        with mock.patch.object(host, 'reserve_generation', side_effect=AssertionError('invalid request')):
+            status, _, _ = self._request(port, 'POST', '/api/learn',
+                b'{}', {'Content-Type': 'application/json'})
+        self.assertEqual(status, 400)
+        payload = {
+            'schema_version': app.HTTP_SCHEMA_VERSION, 'provider_mode': 'auto',
+            'explicit_interests': ['gardening'],
+            'pasted_educational_source_text': 'Sound is a mechanical wave.',
+            'learning_request': 'Explain sound', 'cultural_context': 'classroom',
+        }
+        raw = json.dumps(payload).encode('utf-8')
+        headers = {'Content-Type': 'application/json', 'Origin': public.origin}
+        with mock.patch.object(host, 'reserve_generation', side_effect=AssertionError('origin mismatch')):
+            status, _, _ = self._request(port, 'POST', '/api/learn', raw,
+                dict(headers, Origin='https://attacker.example'))
+        self.assertEqual(status, 403)
+        with mock.patch.object(host, 'reserve_generation', return_value=False) as gate:
+            status, data, _ = self._request(port, 'POST', '/api/learn', raw, headers)
+        self.assertEqual(status, 429)
+        self.assertEqual(json.loads(data)['error']['code'], 'quota_exhausted')
+        gate.assert_called_once()
+        with mock.patch.object(host, 'reserve_generation', side_effect=RuntimeError('redis down')):
+            status, data, _ = self._request(port, 'POST', '/api/learn', raw, headers)
+        self.assertEqual(status, 503)
+        self.assertEqual(json.loads(data)['error']['code'], 'quota_unavailable')
+        cfg = app.AppConfig('provider', qloo_api_key='fake-key', openai_api_key='fake-key', openai_model='mock-model')
+        with (mock.patch.object(host, 'reserve_generation', return_value=True) as quota,
+              mock.patch.object(app, 'load_app_config', return_value=cfg),
+              mock.patch.object(app, 'QlooCulturalIntelligenceProvider'),
+              mock.patch.object(app, 'OpenAIResponsesLessonGenerationProvider'),
+              mock.patch.object(app, 'run_learning_workflow', side_effect=RuntimeError('test-only stop')) as workflow):
+            status, content, _ = self._request(port, 'POST', '/api/learn', raw, headers)
+        quota.assert_called_once()
+        workflow.assert_called_once()
+        self.assertEqual(status, 500)
+        self.assertNotIn(b'fake-key', content)
 
     def test_login_and_live_validation_and_quota_stop(self):
         port = self._serve(self.settings)

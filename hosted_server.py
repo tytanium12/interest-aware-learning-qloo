@@ -37,6 +37,7 @@ class Settings:
     redis_token: str
     quota_key: str
     max_generations: int
+    public_demo: bool = False
 
     @classmethod
     def read(cls, env=None):
@@ -45,6 +46,10 @@ class Settings:
         if raw_enabled not in ("0", "1"):
             raise ValueError("HOSTED_LIVE_ENABLED must be 0 or 1")
         enabled = raw_enabled == "1"
+        public_setting = str(env.get("HOSTED_PUBLIC_DEMO", "0"))
+        if public_setting not in ("0", "1"):
+            raise ValueError("HOSTED_PUBLIC_DEMO must be 0 or 1")
+        public_demo = public_setting == "1"
         origin = env.get("HOSTED_ORIGIN") or env.get("RENDER_EXTERNAL_URL", "")
         code = env.get("HOSTED_JUDGE_CODE", "")
         cookie_secret = env.get("HOSTED_COOKIE_SECRET", "")
@@ -62,7 +67,7 @@ class Settings:
             if (parsed.scheme != "https" or not parsed.hostname or parsed.path not in ("", "/")
                     or parsed.query or parsed.fragment or parsed.username or parsed.password or parsed.port not in (None, 443)):
                 raise ValueError("A valid HTTPS hosted origin is required")
-            if len(code) < 12 or len(cookie_secret) < 32 or code == cookie_secret:
+            if not public_demo and (len(code) < 12 or len(cookie_secret) < 32 or code == cookie_secret):
                 raise ValueError("Hosted judge authentication secrets are missing or weak")
             upstream = urlsplit(redis_url)
             if (upstream.scheme != "https" or not upstream.hostname or not upstream.hostname.endswith(".upstash.io")
@@ -88,7 +93,7 @@ class Settings:
             tavily_path = env.get("TAVILY_API_KEY_FILE", "")
             if not tavily_path or not Path(tavily_path).is_file():
                 raise ValueError("Tavily secret file is not configured")
-        return cls(origin.rstrip("/"), enabled, code, cookie_secret, redis_url.rstrip("/"), redis_token, quota_key, maximum)
+        return cls(origin.rstrip("/"), enabled, code, cookie_secret, redis_url.rstrip("/"), redis_token, quota_key, maximum, public_demo)
 
 
 def session_token(settings, now=None):
@@ -195,7 +200,7 @@ class HostedHandler(app.Handler):
         if route == "/health":
             self._send(200, '{"status":"ok","service":"interest-aware-learning"}', "application/json; charset=utf-8")
         elif route == "/":
-            if self._authorized():
+            if self._settings().public_demo or self._authorized():
                 # Existing UI is unmodified; response is an actual live provider workflow.
                 self._send(200, app.HTML, "text/html; charset=utf-8")
             else:
@@ -207,6 +212,9 @@ class HostedHandler(app.Handler):
         settings = self._settings()
         route = urlsplit(self.path).path
         if route == "/judge-access":
+            if settings.public_demo:
+                self._send(404, "Not found")
+                return
             if not settings.enabled:
                 self._send(503, "Live judge access is not enabled.")
                 return
@@ -238,7 +246,7 @@ class HostedHandler(app.Handler):
         if not settings.enabled:
             self._deny(503, "live_disabled", "Live generation is temporarily disabled.")
             return
-        if not self._authorized():
+        if not settings.public_demo and not self._authorized():
             self._deny(403, "judge_access_required", "Judge access is required to generate a live lesson.")
             return
         if self.headers.get("Origin") not in (None, settings.origin):
@@ -273,7 +281,7 @@ class HostedHandler(app.Handler):
             self._deny(503, "quota_unavailable", "Live generation is temporarily unavailable.")
             return
         if not allowed:
-            self._deny(429, "quota_exhausted", "The judge demonstration allowance has been reached.")
+            self._deny(429, "quota_exhausted", "The demonstration allowance has been reached.")
             return
         # Existing handler validates the request again and executes existing workflow.
         self.rfile = io.BytesIO(body)
