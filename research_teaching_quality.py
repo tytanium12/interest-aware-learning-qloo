@@ -19,14 +19,23 @@ which while who why will with within would you your not yet further different
 research source sources study results report article says notes describes example
 examples explains explanation consider compared comparing assume given question
 questions true false information material lesson learners learning learner'''.split())
-_LINK = frozenset(('because','therefore','means','mean','affects','affect','influences',
-                   'influence','reason','consequently','helps','help','depends','depend',
-                   'explains','explain','suggests','suggest','supports','support','allows',
-                   'allow','indicates','indicate','leads','lead','matters','matter'))
+def _normalize_token(token):
+    """Conservative word-form matching, including the two-letter term pH."""
+    word = token.casefold()
+    if len(word) > 5 and word.endswith('ies'):
+        return word[:-3] + 'y'
+    if len(word) > 6 and word.endswith('ing'):
+        return word[:-3]
+    if len(word) > 5 and word.endswith('ers'):
+        return word[:-1]
+    if len(word) > 4 and word.endswith('s') and not word.endswith('ss'):
+        return word[:-1]
+    return word
 
 
 def _tokens(text):
-    return {w.casefold() for w in _WORDS.findall(text or '') if len(w) >= 3}
+    return {_normalize_token(w) for w in _WORDS.findall(text or '')
+            if len(w) >= 3 or w.casefold() == 'ph'}
 
 
 def _interesting(text):
@@ -75,7 +84,7 @@ def _supported_research_example(example, source, educational_source):
         return False
     combined = _example_text(example)
     explanation = example.get('explanation', '')
-    if not isinstance(explanation, str) or len(explanation.strip()) < 90:
+    if not isinstance(explanation, str) or len(_tokens(explanation)) < 8:
         return False
     if f'[{identifier}]' not in combined:
         return False
@@ -90,10 +99,9 @@ def _supported_research_example(example, source, educational_source):
         return False
     if not (explanation_words & _support_words(educational_source)):
         return False
-    # Require some explanatory relationship; copied research as a caption
-    # without a teaching connection should not pass.
-    if not (explanation_words & _LINK):
-        return False
+    # Terms from both the research excerpt and the educational source must
+    # appear in actual explanatory prose. No arbitrary connective-word list:
+    # valid explanations may communicate causality without those exact words.
     return True
 
 

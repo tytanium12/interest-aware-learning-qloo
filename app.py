@@ -3092,8 +3092,24 @@ if not getattr(OpenAIResponsesLessonGenerationProvider, '_qloo4_writer_wrapped',
             reconcile_personalization(
                 lesson, cultural_intelligence.interests, research_sources,
                 request.pasted_educational_source_text)
-        except OpenAIProviderError:
-            raise
+        except OpenAIProviderError as exc:
+            if exc.code != 'research_grounding' or os.environ.get('HOSTED_PUBLIC_DEMO') != '1':
+                raise
+            # One OpenAI generation was already consumed. Never retry or present
+            # unverified research text. Generate a deterministic lesson strictly
+            # from the user's pasted source, with no web citations attached.
+            from dataclasses import replace
+            safe = LocalDemoLessonGenerationProvider().generate(
+                request, cultural_intelligence, lesson_plan)
+            return replace(
+                safe,
+                demo_label='Source-only fallback (research validation did not pass)',
+                personalization_note='Research validation did not pass; this fallback uses the supplied educational text only.',
+                provider_usage={'research': {'status': 'validation_fallback', 'source_count': 0},
+                                'openai_generation_attempted': True},
+                provenance='Research-grounding rejection: deterministic source-only fallback; no web citations.',
+                research_sources=(),
+            )
         except (TypeError, ValueError):
             required = {
                 'lesson_explanation', 'source_quote_anchors', 'introduced_analogies',
